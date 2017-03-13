@@ -442,29 +442,42 @@ static bool wifiConnect(const char *cszSSID, const char *cszPassword) {
   // Clear current settings
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+
   // Try and establish a connection
-  int attempts = 3;
-  while (attempts) {
-    int status;
+  int attempts = 5;
+  int status;
+
+  while (attempts && status != WL_CONNECTED) {
+
     if(strlen(cszPassword)==0)
       status = WiFi.begin(cszSSID);
     else
       status = WiFi.begin(cszSSID, cszPassword);
-    if(status==WL_CONNECTED)
-      return true;
+
     // Wait 10 seconds for the next attempt
     if(--attempts) // Wait before next attempt
       delay(10000);
-    }
+
+	status = WiFi.status();
+  }
+
+  if (status == WL_CONNECTED)
+	  return true;
   // Failed
   return false;
   }
 
+static bool wifiIsConnected() {
+	if (WiFi.status() == WL_CONNECTED)
+		return true;
+	return false;
+}
+
 /** Enter access point mode for system configuration
  */
 static void wifiAccessPoint() {
-  static char szSSID[12];
-  sprintf(szSSID, "IoThing %02d", ESP.getChipId() % 100);
+  static char szSSID[32];
+  snprintf(szSSID, sizeof(szSSID), chooseUniqueName().c_str());
   // Set WiFi to station mode and disconnect from an AP if it was previously connected
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
@@ -639,10 +652,25 @@ bool IotConfigClass::setup(bool force, int eepromOffset) {
  * to handle incoming configuration changes.
  */
 void IotConfigClass::loop() {
-  httpServer.handleClient();
-  dnsServer.processNextRequest();
-  MDNS.update();
+  if (!wifiIsConnected()) {
+	if (m_state != StateConnecting)
+		onStateChange(StateConnecting);
+
+	if (wifiConnect(Config.m_szSSID, Config.m_szPass)) {
+		onStateChange(StateConnected);
+		webServer(false);
+		// Set up the MDNS server
+		String name = chooseUniqueName();
+		MDNS.begin(name.c_str());
+		MDNS.addService("iothing", "tcp", 80);
+	}
   }
+  else {
+	  httpServer.handleClient();
+	  dnsServer.processNextRequest();
+	  MDNS.update();
+  }
+}
 
 // The singleton instance
 IotConfigClass IotConfig = IotConfigClass();
